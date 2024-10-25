@@ -1,0 +1,15 @@
+[package]
+name = "julia_bridge"
+version = "0.1.0"
+authors = ["Your Name <your.email@example.com>"]
+edition = "2021"
+
+[lib]
+name = "julia_bridge"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.35.0"
+jlrs = { version = "0.21.0", features = ["julia-1-10", "tokio-rt"] }
+
