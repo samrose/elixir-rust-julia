@@ -1,50 +1,61 @@
-use rustler::NifResult;
 use jlrs::prelude::*;
-use std::sync::Once;
+use jlrs::runtime::handle::local_handle::LocalHandle;
+use rustler::{NifResult, Env, Error};
+use std::thread_local;
 
-static INIT: Once = Once::new();
-static mut JULIA: Option<(&'static Julia, &'static JoinHandle<()>)> = None;
+thread_local! {
+    static RUNTIME: std::cell::RefCell<Option<LocalHandle>> = std::cell::RefCell::new(None);
+}
 
-fn init_julia() -> Result<&'static Julia, JlrsError> {
-    unsafe {
-        INIT.call_once(|| {
-            let (julia, handle) = Builder::new()
-                .async_runtime(Tokio::<1>::new(false))
-                .spawn()
-                .expect("Could not start Julia");
-            JULIA = Some((Box::leak(Box::new(julia)), Box::leak(Box::new(handle))));
-        });
-        Ok(JULIA.unwrap().0)
-    }
+fn get_or_init_runtime() -> Result<LocalHandle, Error> {
+    RUNTIME.with(|rt| {
+        let mut rt = rt.borrow_mut();
+        if rt.is_none() {
+            let handle = Builder::new()
+                .n_threads(1)
+                .start_local()
+                .map_err(|_| Error::Term(Box::new(atoms::error())))?;
+            *rt = Some(handle);
+        }
+        Ok(rt.as_ref().unwrap().clone())
+    })
 }
 
 #[rustler::nif]
-fn add(a: f64, b: f64) -> NifResult<f64> {
-    let julia = init_julia()
-        .map_err(|e| rustler::Error::Term(Box::new(e.to_string())))?;
-        
-    unsafe {
-        julia.scope(|frame| {
-            frame.eval::<f64>(&format!("{}+{}", a, b))
-        })
-        .map_err(|e| rustler::Error::Term(Box::new(e.to_string())))
-    }
+fn call_julia_function(env: Env, func_name: String, args: Vec<f64>) -> NifResult<f64> {
+    let runtime = get_or_init_runtime()?;
+    
+    runtime.local_scope::<_, 2>(|mut frame| {
+        unsafe {
+            // First check if calculator.jl needs to be included
+            if !Value::eval_string::<bool>(&mut frame, "@isdefined(add)")
+                .map_err(|_| Error::Term(Box::new(atoms::error())))? {
+                runtime.include("calculator.jl")
+                    .map_err(|_| Error::Term(Box::new(atoms::error())))?;
+            }
+
+            // Get the function
+            let func = Value::eval_string::<Value>(&mut frame, &func_name)
+                .map_err(|_| Error::Term(Box::new(atoms::error())))?;
+            
+            // Convert arguments
+            let julia_args: Vec<Value> = args.iter()
+                .map(|&x| Value::new(&mut frame, x))
+                .collect();
+            
+            // Call function and convert result
+            let result = func.call(&julia_args)
+                .map_err(|_| Error::Term(Box::new(atoms::error())))?;
+            
+            result.unbox::<f64>()
+                .map_err(|_| Error::Term(Box::new(atoms::error())))
+        }
+    })
 }
 
-#[rustler::nif]
-fn multiply_array(arr: Vec<f64>) -> NifResult<f64> {
-    let julia = init_julia()
-        .map_err(|e| rustler::Error::Term(Box::new(e.to_string())))?;
-        
-    unsafe {
-        julia.scope(|frame| {
-            let arr_str = arr.iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            frame.eval::<f64>(&format!("prod([{}])", arr_str))
-        })
-        .map_err(|e| rustler::Error::Term(Box::new(e.to_string())))
+mod atoms {
+    rustler::atoms! {
+        error
     }
 }
 

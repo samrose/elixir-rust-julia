@@ -17,3 +17,5 @@ function multiply_array(arr::Vector{Float64})
 end
 
 end
+
+#print(Calculator.add_numbers(1.0, 2.0))

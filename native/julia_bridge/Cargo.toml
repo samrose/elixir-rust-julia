@@ -11,5 +11,4 @@ crate-type = ["cdylib"]
 
 [dependencies]
 rustler = "0.35.0"
-jlrs = { version = "0.21.0", features = ["julia-1-10", "tokio-rt"] }
-
+jlrs = { version = "0.21.0", features = ["julia-1-10", "local-rt"] }
